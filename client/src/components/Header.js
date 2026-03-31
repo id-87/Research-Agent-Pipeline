@@ -6,9 +6,9 @@ function Header() {
     <header className="header">
       <div className="header-inner">
         <div className="header-logo">
-          <span className="logo-mark">B</span>
-          <span className="logo-text">BROKAI</span>
-          <span className="logo-tag">LABS</span>
+          {/* <span className="logo-mark">B</span> */}
+          <span className="logo-text">Outreach Agent</span>
+          {/* <span className="logo-tag">LABS</span> */}
         </div>
         <div className="header-product">
           <span className="header-pill">LEAD INTELLIGENCE SYSTEM</span>
