@@ -42,6 +42,22 @@ function initProviders() {
   console.log(`[LLM] Active provider: ${activeProvider}`);
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isRateLimitError(err) {
+  const msg = (err.message || "").toLowerCase();
+  return (
+    err.status === 429 ||
+    msg.includes("429") ||
+    msg.includes("rate limit") ||
+    msg.includes("quota exceeded") ||
+    msg.includes("resource exhausted") ||
+    msg.includes("too many requests")
+  );
+}
+
 // ─── Groq call ───────────────────────────────────────────────────────────────
 async function callGroq(systemPrompt, userPrompt, temperature = 0.3) {
   const completion = await groqClient.chat.completions.create({
@@ -69,7 +85,27 @@ async function callGemini(systemPrompt, userPrompt, temperature = 0.3) {
   return response.text || "";
 }
 
-// ─── Main callLLM function (with fallback) ───────────────────────────────────
+// ─── Try a single provider with retries ──────────────────────────────────────
+async function tryProvider(providerName, callFn, systemPrompt, userPrompt, temperature, maxRetries = 2) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await callFn(systemPrompt, userPrompt, temperature);
+    } catch (err) {
+      const isRateLimit = isRateLimitError(err);
+      console.error(`[LLM] ${providerName} attempt ${attempt + 1} failed:`, err.message);
+
+      if (isRateLimit && attempt < maxRetries) {
+        const delay = (attempt + 1) * 5000; // 5s, 10s
+        console.log(`[LLM] Rate limited, waiting ${delay / 1000}s before retry...`);
+        await sleep(delay);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+// ─── Main callLLM function (with fallback + retry) ───────────────────────────
 async function callLLM(systemPrompt, userPrompt, temperature = 0.3) {
   initProviders();
 
@@ -77,31 +113,34 @@ async function callLLM(systemPrompt, userPrompt, temperature = 0.3) {
     throw new Error("No LLM provider configured. Set GROQ_API_KEY or GEMINI_API_KEY in .env");
   }
 
-  // Try the active provider first
-  try {
-    if (activeProvider === "groq") {
-      return await callGroq(systemPrompt, userPrompt, temperature);
-    } else if (activeProvider === "gemini") {
-      return await callGemini(systemPrompt, userPrompt, temperature);
-    }
-  } catch (err) {
-    console.error(`[LLM] ${activeProvider} failed:`, err.message);
-
-    // If primary fails, try the other provider
-    if (activeProvider === "groq" && geminiClient) {
-      console.log("[LLM] Falling back to Gemini...");
-      activeProvider = "gemini"; // Switch for future calls too
-      return await callGemini(systemPrompt, userPrompt, temperature);
-    }
-    if (activeProvider === "gemini" && groqClient) {
-      console.log("[LLM] Falling back to Groq...");
-      activeProvider = "groq";
-      return await callGroq(systemPrompt, userPrompt, temperature);
-    }
-
-    // No fallback available
-    throw err;
+  const providers = [];
+  if (activeProvider === "groq") {
+    providers.push({ name: "groq", fn: callGroq });
+    if (geminiClient) providers.push({ name: "gemini", fn: callGemini });
+  } else {
+    providers.push({ name: "gemini", fn: callGemini });
+    if (groqClient) providers.push({ name: "groq", fn: callGroq });
   }
+
+  let lastError = null;
+
+  for (const provider of providers) {
+    try {
+      const result = await tryProvider(provider.name, provider.fn, systemPrompt, userPrompt, temperature, 2);
+      // If we succeeded with a non-primary, switch to it for future calls
+      if (provider.name !== activeProvider) {
+        activeProvider = provider.name;
+      }
+      return result;
+    } catch (err) {
+      lastError = err;
+      console.error(`[LLM] ${provider.name} exhausted all retries:`, err.message);
+      // Continue to next provider
+    }
+  }
+
+  // All providers failed
+  throw lastError || new Error("All LLM providers failed");
 }
 
 module.exports = { callLLM };
