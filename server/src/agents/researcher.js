@@ -1,24 +1,24 @@
 const { callLLM } = require("../lib/llm");
 const { fetchPage, extractText, webSearch } = require("../lib/scraper");
 
-const SYSTEM_PROMPT = `You are a business research agent. Your job is to produce a structured business profile.
+const SYSTEM_PROMPT = `You are a business research agent. Your job is to produce a structured business profile based ONLY on the provided scraped content from DuckDuckGo and other sources.
 
-You will receive whatever web data was found — it may be partial, minimal, or just a company name.
-Use your knowledge about the company AND the scraped data to produce the best possible profile.
-If you know about the company from your training knowledge, use that information.
-
-Return ONLY valid JSON in this exact shape — no markdown, no explanation:
+Rules:
+- Prioritize facts from the provided text over your general training knowledge.
+- If the scraped text is minimal or irrelevant, DO NOT invent specific details (like specific services or tools).
+- Use "Unknown" or "General [Industry] services" if you are not sure.
+- Return ONLY valid JSON in this exact shape — no markdown, no explanation:
 {
   "companyName": "string",
   "description": "2-3 sentences about what the company does",
   "industry": "string (be specific, e.g. Food Delivery, Healthcare SaaS, Legal Services)",
-  "sizeSignals": "string (employee range, funding stage, number of offices, or 'SMB' if unknown)",
+  "sizeSignals": "string (employee range, funding stage, or 'SMB' if unknown)",
   "digitalPresence": "string (website exists, active social media, listed on directories, etc.)",
-  "existingTools": "string (any CRM, booking system, communication tools, or 'Likely uses standard tools' if unknown)",
+  "existingTools": "string (specific tools found, or 'Standard business tools' if unknown)",
   "websiteUrl": "string or null"
 }
 
-Never return null for description or industry. Always make a best-effort inference.`;
+Accuracy is more important than being exhaustive. If you cannot find something, state it is unknown.`;
 
 async function runResearcher(companyName, location = "") {
   const locationStr = location || "India";
@@ -45,13 +45,15 @@ async function runResearcher(companyName, location = "") {
     if (foundLinks.length >= 4) break;
   }
 
-  const userPrompt = `Research this company and return a structured JSON profile.
-Use both the scraped data below AND your own knowledge about this company if you recognise it.
-
-${combinedText.slice(0, 5000)}
-
-Company name: ${companyName}
+  const userPrompt = `Research task for: "${companyName}"
 Location: ${locationStr}
+
+Below is the scraped data found via DuckDuckGo. If the data describes a different company, ignore it.
+If the data is empty, mention that limited information was available.
+
+--- SCRAPED CONTENT START ---
+${combinedText.slice(0, 5000)}
+--- SCRAPED CONTENT END ---
 
 Return the JSON profile now.`;
 
@@ -66,9 +68,11 @@ Return the JSON profile now.`;
     }
     return { success: true, data: profile, sourcesChecked: foundLinks };
   } catch {
-    const fallbackPrompt = `Based only on the company name "${companyName}" located in "${locationStr}", generate a best-effort business profile JSON. Use your training knowledge if you know this company.`;
+    const fallbackPrompt = `Generate a very conservative business profile for "${companyName}" in "${locationStr}". 
+If you recognize this EXACT company name from your training data, use that. 
+Otherwise, only provide general industry information and mark everything else as "Information not available".`;
     try {
-      const raw2 = await callLLM(SYSTEM_PROMPT, fallbackPrompt, 0.3);
+      const raw2 = await callLLM(SYSTEM_PROMPT, fallbackPrompt, 0.1);
       const jsonMatch2 = raw2.match(/\{[\s\S]*\}/);
       if (jsonMatch2) {
         const profile2 = JSON.parse(jsonMatch2[0]);
@@ -76,7 +80,7 @@ Return the JSON profile now.`;
         profile2.websiteUrl = profile2.websiteUrl || (foundLinks[0] || null);
         return { success: true, data: profile2, sourcesChecked: foundLinks };
       }
-    } catch {}
+    } catch { }
 
     return {
       success: true,

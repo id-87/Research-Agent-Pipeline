@@ -3,7 +3,7 @@ const { fetchPage, extractText, extractEmails, extractPhones, webSearch } = requ
 
 const SYSTEM_PROMPT = `You are a contact information extraction agent.
 
-Given scraped web content, extract contact details for the business.
+Given scraped web content from DuckDuckGo and company sites, extract contact details for the business.
 Return ONLY valid JSON — no markdown, no explanation:
 {
   "phone": "string or null",
@@ -14,7 +14,9 @@ Return ONLY valid JSON — no markdown, no explanation:
 }
 
 Rules:
-- Only use real data found in the content. Do not invent contact info.
+- Only use REAL data found in the content. 
+- DO NOT invent or guess contact info.
+- Ignore placeholder data like "info@company.com" or "123-456-7890" unless it looks like the actual contact for THIS company.
 - If multiple phones exist, pick the most prominent one.
 - For Indian numbers, prefer +91XXXXXXXXXX format.
 - If no contact info exists in the content, return all nulls.`;
@@ -94,7 +96,7 @@ async function runContactFinder(profile) {
           return { success: true, data: parsed, fallback: false };
         }
       }
-    } catch {}
+    } catch { }
   }
 
   return {

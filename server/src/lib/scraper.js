@@ -79,9 +79,10 @@ function extractPhones(text) {
   return [...found].slice(0, 3);
 }
 
-async function duckDuckGoSearch(query, maxResults = 4) {
+async function duckDuckGoSearch(query, maxResults = 5) {
   try {
     const encoded = encodeURIComponent(query);
+    // Using the HTML version which is better for scraping than the JS-heavy version
     const url = `https://html.duckduckgo.com/html/?q=${encoded}`;
     const html = await fetchPage(url, 12000);
     if (!html) return [];
@@ -96,6 +97,7 @@ async function duckDuckGoSearch(query, maxResults = 4) {
       }
     });
 
+    // Fallback parsing for some DDG HTML variants
     if (links.length === 0) {
       $("a[href]").each((_, el) => {
         const href = $(el).attr("href") || "";
@@ -111,43 +113,19 @@ async function duckDuckGoSearch(query, maxResults = 4) {
           !l.includes("youtube.com") &&
           !l.includes("facebook.com") &&
           !l.includes("twitter.com") &&
-          !l.includes("instagram.com")
+          !l.includes("instagram.com") &&
+          !l.includes("linkedin.com/company") // Avoid generic LinkedIn company lists
       )
       .slice(0, maxResults);
-  } catch {
-    return [];
-  }
-}
-
-async function bingSearch(query, maxResults = 3) {
-  try {
-    const encoded = encodeURIComponent(query);
-    const url = `https://www.bing.com/search?q=${encoded}&count=${maxResults + 2}`;
-    const html = await fetchPage(url, 10000);
-    if (!html) return [];
-
-    const $ = cheerio.load(html);
-    const links = [];
-
-    $("li.b_algo h2 a").each((_, el) => {
-      const href = $(el).attr("href") || "";
-      if (href.startsWith("http") && !href.includes("bing.com") && !href.includes("microsoft.com")) {
-        links.push(href);
-      }
-    });
-
-    return [...new Set(links)].slice(0, maxResults);
-  } catch {
+  } catch (err) {
+    console.error("DuckDuckGo search error:", err);
     return [];
   }
 }
 
 async function webSearch(query, maxResults = 4) {
-  let results = await duckDuckGoSearch(query, maxResults);
-  if (results.length === 0) {
-    results = await bingSearch(query, maxResults);
-  }
-  return results;
+  // Pure DuckDuckGo implementation
+  return await duckDuckGoSearch(query, maxResults);
 }
 
 module.exports = { fetchPage, extractText, extractEmails, extractPhones, webSearch };
